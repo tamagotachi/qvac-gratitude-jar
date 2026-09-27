@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gratitude Jar</title>
+<style>
+  :root { --bg: #fff8ee; --ink: #3a2b16; --muted: #85714f; --line: #f1e0bd; --card: #fffdf8; --amber: #d9822b; --green: #2b8a3e; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.55 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 26px 16px 56px; }
+  h1 { font: 700 32px/1.1 Georgia, serif; margin: 0; text-align: center; } h1 span { color: var(--amber); } .sub { color: var(--muted); margin: 6px 0 8px; text-align: center; }
+  #status { font-size: 13px; color: var(--muted); margin: 0 0 12px; text-align: center; } #status.ok { color: var(--green); } #status.err { color: #c92a2a; }
+  .jar { text-align: center; margin-bottom: 10px; } .jar .emoji { font-size: 70px; cursor: pointer; user-select: none; display: inline-block; transition: transform .15s; } .jar .emoji:active { transform: rotate(-8deg); }
+  .jar small { display: block; color: var(--muted); } .streak { font-size: 15px; font-weight: 700; color: var(--amber); }
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 18px 20px; margin-bottom: 16px; text-align: center; }
+  .prompt { font: italic 21px/1.5 Georgia, serif; margin: 6px 0 12px; min-height: 32px; }
+  textarea { width: 100%; font: 17px/1.6 Georgia, serif; padding: 10px 12px; border: 2px solid var(--line); border-radius: 12px; background: #fff; color: var(--ink); min-height: 90px; resize: vertical; }
+  textarea:focus-visible, button:focus-visible { outline: 3px solid #ffd8a8; outline-offset: 2px; }
+  button { font: inherit; font-weight: 700; padding: 10px 18px; border: 0; border-radius: 12px; background: var(--amber); color: #fff; cursor: pointer; }
+  button.ghost { background: #fff; color: var(--ink); border: 1px solid var(--line); padding: 6px 12px; font-size: 14px; } button.busy { opacity: .55; cursor: progress; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: center; margin-top: 10px; } .note { color: var(--muted); font-size: 14px; min-height: 20px; margin: 8px 0 0; }
+  .shake-anim { animation: shake .5s; } @keyframes shake { 10%, 90% { transform: translateX(-3px) rotate(-4deg); } 20%, 80% { transform: translateX(4px) rotate(4deg); } 30%, 50%, 70% { transform: translateX(-8px) rotate(-8deg); } 40%, 60% { transform: translateX(8px) rotate(8deg); } }
+  .reveal { background: #fff9db; border-radius: 14px; padding: 14px; margin-top: 12px; font: italic 17px Georgia, serif; } .reveal small { display: block; color: var(--muted); font-style: normal; margin-top: 4px; }
+  .entry { text-align: left; border-top: 1px solid var(--line); padding: 8px 0; } .entry .d { font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; } .empty { color: var(--muted); } .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Gratitude <span>Jar</span></h1>
+  <p class="sub">A new prompt every day. Save your answer in the jar, keep your streak, and shake it to revisit an old one.</p>
+  <p id="status">Checking the AI prompt writer...</p>
+  <div class="jar"><div class="emoji" id="jarEmoji" role="button" tabindex="0" aria-label="Shake the jar">🫙</div><small>Tap the jar to shake it</small><div class="streak" id="streak"></div><div id="reveal"></div></div>
+  <section class="panel">
+    <div class="prompt" id="prompt">Loading today's prompt...</div>
+    <textarea id="answer" placeholder="Write your answer here..." aria-label="Your gratitude entry"></textarea>
+    <div class="row"><button id="save">🏺 Add to the jar</button><button class="ghost" id="skip">Skip, give me another prompt</button></div>
+    <p class="note" id="note"></p>
+  </section>
+  <section class="panel" style="text-align:left"><h2 style="font:700 18px Georgia, serif;margin:0 0 8px;text-align:center">Your entries (<span id="count">0</span>)</h2><div id="entries"></div></section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const STARTER_PROMPTS = ["What's one small thing that made you smile today?", "Who is someone you're grateful to have in your life, and why?", "What's something about your home that you appreciate?", "What's a skill or ability you're thankful you have?", "What's a challenge that, looking back, taught you something valuable?", "What sound, smell or taste are you grateful for today?"];
+let entries = [], streak = 0, lastDate = null, curPrompt = "", busy = false, ai = { ready: false, message: "Loading...", percent: null, error: null };
+try { const s = JSON.parse(localStorage.getItem("gratitudeJar") || "null"); if (s) { entries = s.entries || []; streak = s.streak || 0; lastDate = s.lastDate || null; } } catch {}
+const persist = () => { try { localStorage.setItem("gratitudeJar", JSON.stringify({ entries, streak, lastDate })); } catch {} };
+const todayKey = () => { const d = new Date(); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); };
+const usedPrompts = () => entries.map((e) => e.prompt);
+
+async function newPrompt() {
+  $("prompt").textContent = "Thinking of a question..."; $("save").disabled = true;
+  if (!ai.ready) { const left = STARTER_PROMPTS.filter((p) => !usedPrompts().includes(p)); curPrompt = (left.length ? left : STARTER_PROMPTS)[Math.floor(Math.random() * (left.length ? left.length : STARTER_PROMPTS.length))];
+    $("prompt").textContent = curPrompt; $("note").textContent = (ai.error ? "The AI isn't available" : "The AI is still loading" + (ai.percent != null ? " (" + ai.percent + "%)" : "")) + ", so here's a built-in prompt."; $("save").disabled = false; return; }
+  try { const res = await fetch("/api/prompt", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ avoid: usedPrompts() }) }); const r = await res.json(); if (!res.ok) throw new Error(r.error); curPrompt = r.prompt; $("prompt").textContent = curPrompt; $("note").textContent = ""; }
+  catch (err) { curPrompt = STARTER_PROMPTS[Math.floor(Math.random() * STARTER_PROMPTS.length)]; $("prompt").textContent = curPrompt; $("note").textContent = "The AI had a problem (" + err.message + "), so here's a built-in prompt."; }
+  $("save").disabled = false;
+}
+$("skip").addEventListener("click", newPrompt);
+function save() {
+  const text = $("answer").value.trim(); if (text.length < 3) { $("note").textContent = "Write a little something first."; return $("answer").focus(); }
+  const t = todayKey(); if (lastDate !== t) { streak = lastDate === yesterdayKey() ? streak + 1 : 1; lastDate = t; }
+  entries.unshift({ date: new Date().toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" }), prompt: curPrompt, text }); persist(); drawEntries(); drawStreak();
+  $("answer").value = ""; $("note").textContent = "Added to the jar! \ud83c\udf89"; newPrompt();
+}
+function yesterdayKey() { const d = new Date(); d.setDate(d.getDate() - 1); return d.getFullYear() + "-" + (d.getMonth() + 1) + "-" + d.getDate(); }
+$("save").addEventListener("click", save); $("answer").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
+function drawStreak() { $("streak").textContent = streak > 0 ? "\ud83d\udd25 " + streak + "-day streak" : ""; }
+function drawEntries() { const box = $("entries"); box.innerHTML = entries.length ? "" : '<p class="empty">Your saved entries will appear here.</p>'; $("count").textContent = entries.length;
+  entries.slice(0, 30).forEach((e) => { const d = document.createElement("div"); d.className = "entry"; const dd = document.createElement("div"); dd.className = "d"; dd.textContent = e.date; const p = document.createElement("div"); p.style.fontStyle = "italic"; p.style.color = "var(--muted)"; p.style.fontSize = "14px"; p.textContent = e.prompt; const t = document.createElement("div"); t.textContent = e.text; d.append(dd, p, t); box.append(d); }); }
+function shake() { if (!entries.length) { $("note").textContent = "The jar is empty. Add an entry first!"; return; }
+  const e = entries[Math.floor(Math.random() * entries.length)], d = document.createElement("div"); d.className = "reveal"; d.textContent = "\u201c" + e.text + "\u201d"; const s = document.createElement("small"); s.textContent = e.date; d.append(s);
+  $("reveal").innerHTML = ""; $("reveal").append(d); $("jarEmoji").classList.remove("shake-anim"); void $("jarEmoji").offsetWidth; $("jarEmoji").classList.add("shake-anim");
+}
+$("jarEmoji").addEventListener("click", shake); $("jarEmoji").addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); shake(); } });
+
+async function checkStatus() {
+  try { ai = await (await fetch("/api/status")).json();
+    if (ai.error) return setStatus("AI error: " + ai.error + ". The jar still works with built-in prompts.", "err");
+    if (ai.ready) return setStatus("AI prompt writer ready. It runs on your device.", "ok");
+    setStatus(ai.message + (ai.percent != null ? " " + ai.percent + "%" : "") + " Built-in prompts work meanwhile.");
+  } catch { ai = { ready: false, error: "the server can't be reached" }; setStatus("Can't reach the server. Open http://localhost:3099 and make sure npm start is running.", "err"); return; }
+  setTimeout(checkStatus, 1500);
+}
+function setStatus(t, c = "") { $("status").textContent = t; $("status").className = c; }
+drawStreak(); drawEntries(); checkStatus(); newPrompt();
+</script>
+</body>
+</html>
